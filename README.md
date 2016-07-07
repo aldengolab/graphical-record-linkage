@@ -1,5 +1,9 @@
 # ebLink for Python
-A graphical record linkage algorithm in Python based on [Steorts, et. al. (2015)](https://arxiv.org/abs/1312.4645), Bayesian Analysis.
+A graphical record linkage algorithm in Python based on [Steorts, et. al. (2015)](https://arxiv.org/abs/1312.4645).
 
 The algorithm developed by Steorts in R can be found [here](https://github.com/resteorts/ebLink).
+
+## Bibliography
+
+1. Steorts, Rebecca C., Rob Hall, and Stephen E. Fienberg. "Entity Resolution with Emprically Motivated Priors", __Bayesian Analysis__, v. 10, no. 4 (2015):849-975.
 
