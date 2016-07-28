@@ -2,12 +2,15 @@
 # 7/27/2016
 
 # This file is an encapsulation in Python for ebLink, which runs in R.
+# This program requires R to run.
 
-import datetime
+from datetime import datetime
 import rpy2
 import pandas as pd
 import os
 import random
+import subprocess
+import csv
 # Execute necessary dependencies for rpy2
 from numpy import *
 import scipy as sp
@@ -17,17 +20,18 @@ import rpy2.robjects as ro
 from rpy2.robjects import pandas2ri
 pandas2ri.activate()
 
-class EBlink:
+class EBlink(object):
 
     def __init__(self, interactive=False):
         self._files = []
         self._headers = []
         self._columns = []
-        self._matchcolumns = []
+        self._matchcolumns = {}
         self._column_types = {} # Maps first file's columns to Cat or Num
         self._a = None
         self._b = None
-        self._filenum = None
+        self._iterations = 0
+        self._filenum = []
         self.tmp_dir = None
         self.tmp = None
         self._interactive = interactive
@@ -40,24 +44,35 @@ class EBlink:
         self.get_col_types()
         self.build()
         self.define()
+        return
         self.model()
         self.write_result()
+
+    @property
+    def files(self):
+        return self._files
+
+    @files.setter
+    def files_setter(self, files):
+        if type(files) == list and len(filter(lambda x: os.path.isfile(x), files)) == len(files):
+            self._files = files
+        else:
+            raise NameError('Filename(s) poorly formed.')
+
+    @property
+    def columns(self):
+        return self._columns
 
     @property
     def column_types(self):
         return self._column_types
 
     @column_types.setter
-    def column_types(self, types):
-        self._column_types = types
-
-    @property
-    def files(self):
-        return self._files
-
-    @property
-    def columns(self):
-        return self._columns
+    def column_types_setter(self, types):
+        if type(types) == dict:
+            self._column_types = types
+        else:
+            raise NameError('Types must be dict.')
 
     def set_files(self, filename=None, delete=False):
         '''
@@ -66,32 +81,63 @@ class EBlink:
         '''
         if delete:
             self._files = []
-            print 'Files: %s'.format(self._files)
+            print 'Files: {}'.format(self._files)
             return
 
-        if self._interactive == True:
-            print 'Please specify the filepaths for the data you wish to link.'
-            print 'Separate each filepath by a comma.'
+        if self._interactive:
+            print '\nPLEASE SPECIFY THE FILEPATHS FOR THE DATA YOU WISH TO LINK. Separate each filepath by a comma.\n'
+            print 'Current files loaded: {} \n'.format(self._files)
             inp = None
             while inp == None:
-                inp = raw_input('Filepaths: ')
+                inp = raw_input('\nFilepaths: ')
             filename = []
             for x in inp.split(','):
                 filename.append(x.strip())
 
         if type(filename) == list and len(filename) > 1:
             for n in filename:
-                if os.isfile(n):
+                if os.path.isfile(n):
                     self._files.append(n)
                 else:
-                    print '{} is not a file.'.format(n)
+                    print '\nERROR: {} is not a file.\n'.format(n)
+                    self.file_retry()
         else:
             if type(filename) == list:
                 filename = filename[0]
-            if os.isfile(filename):
+            if os.path.isfile(filename):
                 self._files.append(filename)
             else:
-                print '{} is not a file.'.format(filename)
+                print '\nERROR: {} is not a file.\n'.format(filename)
+                self.file_retry()
+
+        if self._interactive:
+            if not self.check_correct():
+                self.set_files()
+
+    def check_correct(self):
+        '''
+        Asks the user if they want to continue.
+        '''
+        answer = ''
+        while answer.strip().upper() != 'Y' and answer.strip().upper() != 'N':
+            answer = raw_input('\nARE THESE SETINGS CORRECT (Y/N)? ')
+        if answer.upper().strip() == 'N':
+            return False
+        else:
+            return True
+
+    def file_retry(self):
+        '''
+        Asks user if they'd like to retry in the event they enter a poorly
+        formed filename.
+        '''
+        retry = None
+        while retry == None:
+            retry = raw_input('\nWould you like to retry? (Y/N): ')
+        if retry == 'Y' or retry == 'y':
+            self.set_files()
+        else:
+            return
 
     def set_columns(self, cols=[]):
         '''
@@ -106,27 +152,28 @@ class EBlink:
         Otherwise, can run ly.
         '''
         if self._interactive == True:
-            count = 0
+            count = 1
             for f in self._files:
-                print 'Please indicate which columns in {} you would like to use for matching.'.format(f)
-                print 'Separate each column name with a comma.'
+                print '\nPLEASE INDICATE WHICH COLUMNS IN {} YOU WOULD LIKE TO USE FOR LINKING. Separate each column name with a comma.'.format(f)
                 cols = []
                 to_add = None
                 while to_add == None:
-                    to_add = raw_input('Columns: ')
+                    to_add = raw_input('\nColumns: ')
                 for x in to_add.split(','):
                     cols.append(x.strip())
                 self._columns.append(cols)
-            if count > 1:
-                for x in self._columns[0]:
-                    print 'Which column in this file matches to {}?'.format(x)
-                    match = None
-                    while match == None:
-                        match = raw_input('Column: ')
-                    if x not in self._matchcolumns:
-                        self._matchcolumns[x] = []
-                    self._matchcolumns[x].append(match.strip())
-            count += 1
+                if count > 1:
+                    for x in self._columns[0]:
+                        print '\nWhich column in this file matches to {}?'.format(x)
+                        match = None
+                        while match == None:
+                            match = raw_input('\nColumn: ')
+                        if x not in self._matchcolumns:
+                            self._matchcolumns[x] = []
+                        self._matchcolumns[x].append(match.strip())
+                count += 1
+            if not self.check_correct():
+                self.set_columns()
         else:
             for i in range(len(cols[0])):
                 if cols[0][i] not in self._matchcolumns:
@@ -141,26 +188,37 @@ class EBlink:
         types = {}
         for col in self._columns[0]:
             typ = None
-            while typ == None:
-                typ = raw_input('Is {} a categorical (C) or numerical (N) field?: '.format(col))
-            types[col] = typ
-        self.columns = types
+            while typ != 'C' and typ != 'N' and typ != 'c' and typ != 'n':
+                typ = raw_input('\nIs {} a categorical (C) or numerical (N) field?: '.format(col))
+                if typ != 'C' and typ != 'N' and typ != 'c' and typ != 'n':
+                    print '\nERROR: Please enter C for categorical or N for numerical.'
+            types[col] = typ.upper()
 
-    def define(self, a=None, b=None):
+
+        self._column_types = types
+
+    def define(self, a=None, b=None, interations=0):
         '''
         Asks user to define alpha and beta for prior distribution or allows
         coder to set if non-interactive session.
         '''
         if self._interactive == True:
-            print 'Please set the alpha and beta values for the prior distribution.'
-            print 'If you are unsure how to set these values, please see the documentation for ebLink.'
+            print '\nPLEASE SET THE ALPHA AND BETA VALUES FOR THE PRIOR DISTRIBUTION.'
+            print 'If you are unsure how to set these values, please see the documentation for ebLink.\n'
             while self._a == None:
                 self._a = raw_input('Alpha: ')
             while self._b == None:
                 self._b = raw_input('Beta: ')
+            print '\nHOW MANY INTERATIONS SHOULD BE RUN? RECOMMENDED > 100,000.'
+            while self._iterations == 0:
+                self._iterations = raw_input('\nIterations: ')
+            if not self.check_correct():
+                self.define()
+
         else:
             self._a = a
             self._b = b
+            self._iterations = iterations
 
     def build(self, headers=False):
         '''
@@ -178,37 +236,42 @@ class EBlink:
             wtr = csv.writer(dest)
             file_count = 1
             # Go through each file
-            for file in files:
-                rdr = self.read_iterator(file)
+            for f in self._files:
+                rdr, fi = self.read_iterator(f)
                 headers = rdr.next()
+                if file_count == 1:
+                    wtr.writerow(headers)
                 # For each line in that file
                 for line in rdr:
                     # Add file number to column to be fed into ebLink
                     self._filenum.append(file_count)
-                    # If first file, columns are sorted correctly
                     if file_count == 1:
+                        # If first file, columns are sorted correctly
                         row = line
+                    else:
                     # Else use match_columns to make sure columns are matched to
                     # first file's columns in the new file.
-                    else:
                         row = []
                         for col in columns:
-                            index = list.index(self._matchcolumns[col][file_count-2])
-                            row.append(list[index])
+                            index = headers.index(self._matchcolumns[col][file_count-2])
+                            row.append(line[index])
                     wtr.writerow(row)
+                fi.close()
+                file_count += 1
 
     def read_iterator(self, filepath):
         '''
         Takes a filepath and returns an iterator. Iterator returns each line as
         a list of elements, much like csv writer. Must return headers as first
-        line.
+        line. Should pass back two values, first is iterator, second is file
+        instance (if necessary).
 
         **ADD NEW CONNECTIONS/FILE TYPES HERE**
         '''
-        if 'csv' in file:
-            f = open(f, 'r')
+        if 'csv' in filepath:
+            f = open(filepath, 'r')
             reader = csv.reader(f)
-            return reader
+            return (reader, f)
         else:
             raise NameError('This file type or connection is not yet supported.')
 
@@ -216,10 +279,10 @@ class EBlink:
         '''
         Private function to build a temporary directory for storing data.
         '''
-        self.tmp_dir = '.tmp-{}'.format(random.randint(0, 100))
+        self.tmp_dir = '.tmp-{}'.format(random.randint(0, 10000))
         bashCommand = 'mkdir {}'.format(self.tmp_dir)
         output = subprocess.check_output(['bash','-c', bashCommand])
-        now = datetime.datetime.today().strftime('%y%m%d-%H:%M:%S')
+        now = datetime.today().strftime('%y%m%d-%H:%M:%S')
         self.tmp = '{}/{}-{:.2}.csv'.format(self.tmp_dir, now, random.random())
 
     def model(self):
