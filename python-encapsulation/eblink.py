@@ -15,8 +15,9 @@ import csv
 from numpy import *
 import scipy as sp
 from pandas import *
-from rpy2.robjects.packages import importr
 import rpy2.robjects as ro
+from rpy2.robjects.packages import importr, data
+from rpy2.robjects.vectors import DataFrame
 from rpy2.robjects import pandas2ri
 pandas2ri.activate()
 
@@ -86,7 +87,7 @@ class EBlink(object):
 
         if self._interactive:
             print '\nPLEASE SPECIFY THE FILEPATHS FOR THE DATA YOU WISH TO LINK. Separate each filepath by a comma.\n'
-            print 'Current files loaded: {} \n'.format(self._files)
+            print 'Current files loaded: {}'.format(self._files)
             inp = None
             while inp == None:
                 inp = raw_input('\nFilepaths: ')
@@ -194,8 +195,10 @@ class EBlink(object):
                     print '\nERROR: Please enter C for categorical or N for numerical.'
             types[col] = typ.upper()
 
-
-        self._column_types = types
+        if not self.check_correct():
+            self.get_col_types()
+        else:
+            self._column_types = types
 
     def define(self, a=None, b=None, interations=0):
         '''
@@ -240,15 +243,17 @@ class EBlink(object):
                 rdr, fi = self.read_iterator(f)
                 headers = rdr.next()
                 if file_count == 1:
-                    wtr.writerow(headers)
+                    wtr.writerow(columns)
                 # For each line in that file
                 for line in rdr:
                     # Add file number to column to be fed into ebLink
                     self._filenum.append(file_count)
                     if file_count == 1:
-                        # If first file, columns are sorted correctly
-                        row = line
-                    else:
+                        row = []
+                        for col in columns:
+                            index = headers.index(col)
+                            row.append(line[index])
+                    elif file_count >= 2:
                     # Else use match_columns to make sure columns are matched to
                     # first file's columns in the new file.
                         row = []
