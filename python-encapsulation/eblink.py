@@ -15,11 +15,6 @@ import csv
 from numpy import *
 import scipy as sp
 from pandas import *
-import rpy2.robjects as ro
-from rpy2.robjects.packages import importr, data
-from rpy2.robjects.vectors import DataFrame
-from rpy2.robjects import pandas2ri
-pandas2ri.activate()
 
 class EBlink(object):
 
@@ -189,10 +184,10 @@ class EBlink(object):
         types = {}
         for col in self._columns[0]:
             typ = None
-            while typ != 'C' and typ != 'N' and typ != 'c' and typ != 'n':
-                typ = raw_input('\nIs {} a categorical (C) or numerical (N) field?: '.format(col))
-                if typ != 'C' and typ != 'N' and typ != 'c' and typ != 'n':
-                    print '\nERROR: Please enter C for categorical or N for numerical.'
+            while typ != 'C' and typ != 'S' and typ != 'c' and typ != 's':
+                typ = raw_input('\nIs {} a categorical (C) or string (S) field?: '.format(col))
+                if typ != 'C' and typ != 'S' and typ != 'c' and typ != 's':
+                    print '\nERROR: Please enter C for categorical or S for string.'
             types[col] = typ.upper()
 
         if not self.check_correct():
@@ -294,3 +289,30 @@ class EBlink(object):
         '''
         Carries out modeling in R.
         '''
+        # Wait to import R objects as it begins an R session and takes memory.
+        import rpy2
+        import rpy2.robjects as ro
+        from rpy2.robjects.packages import importr, data
+        from rpy2.robjects.vectors import DataFrame
+        from rpy2.robjects import pandas2ri
+        pandas2ri.activate()
+        from rpy2.robjects.numpy2ri import numpy2ri
+        ro.conversion.py2ri = numpy2ri
+        rpy2.robjects.activate()
+
+        r_base = importr('base')
+        # Import data to link
+        data = DataFrame.from_csvfile(self.tmp)
+        # Set necessary variables
+        ## X.c contains the categorical variables
+        ## X.s contains the string variables
+        ## p.c is the number of categorical variables
+        ## p.s contains the number of string variables
+        robjects.r("p.c <- {}".format(len(filter(lambda x: x == 'C', self.column_types.values()))))
+        robjects.r("p.s <- {}".format(len(filter(lambda x: x == 'S', self.column_types.values()))))
+        # If you have cloned the repo, this should be where the R code is located
+        robjects.r("source('../ebLink-master/R/code/ebGibbsSampler.R', chdir = TRUE)")
+        robjects.r("library(plyr)")
+        # Runs the gibbs sampler
+        print 'Running the data linkage process...'
+        robjects.r("lam.gs <- rl.gibbs(file.num=file.num,X.s=X.s,X.c=X.c,num.gs=10,a=a,b=b,c=c,d=d, M={})".format(self._iterations))
