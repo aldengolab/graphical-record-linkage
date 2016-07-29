@@ -15,6 +15,7 @@ import csv
 from numpy import *
 import scipy as sp
 from pandas import *
+import R_interface as ri
 
 class EBlink(object):
 
@@ -24,12 +25,13 @@ class EBlink(object):
         self._columns = []
         self._matchcolumns = {}
         self._column_types = {} # Maps first file's columns to Cat or Num
-        self._a = None
-        self._b = None
-        self._iterations = 0
+        self.a = None
+        self.b = None
+        self._numrecords = 0
+        self.iterations = 0
         self._filenum = []
-        self.tmp_dir = None
-        self.tmp = None
+        self._tmp_dir = None
+        self._tmp = None
         self._interactive = interactive
         if self._interactive == True:
             self._run_interactively()
@@ -203,20 +205,23 @@ class EBlink(object):
         if self._interactive == True:
             print '\nPLEASE SET THE ALPHA AND BETA VALUES FOR THE PRIOR DISTRIBUTION.'
             print 'If you are unsure how to set these values, please see the documentation for ebLink.\n'
-            while self._a == None:
-                self._a = raw_input('Alpha: ')
-            while self._b == None:
-                self._b = raw_input('Beta: ')
+            self.a = None
+            while self.a == None:
+                self.a = raw_input('Alpha: ')
+            self.b = None
+            while self.b == None:
+                self.b = raw_input('Beta: ')
             print '\nHOW MANY INTERATIONS SHOULD BE RUN? RECOMMENDED > 100,000.'
-            while self._iterations == 0:
-                self._iterations = raw_input('\nIterations: ')
+            self.iterations = 0
+            while self.iterations == 0:
+                self.iterations = raw_input('\nIterations: ')
             if not self.check_correct():
                 self.define()
 
         else:
-            self._a = a
-            self._b = b
-            self._iterations = iterations
+            self.a = a
+            self.b = b
+            self.iterations = iterations
 
     def build(self, headers=False):
         '''
@@ -227,10 +232,10 @@ class EBlink(object):
             print 'Only one file found. Please set additional files.'
             return
 
-        self._build_directory()
+        self.build_directory()
         columns = self._columns[0]
 
-        with open(self.tmp, 'w') as dest:
+        with open(self._tmp, 'w') as dest:
             wtr = csv.writer(dest)
             file_count = 1
             # Go through each file
@@ -241,6 +246,8 @@ class EBlink(object):
                     wtr.writerow(columns)
                 # For each line in that file
                 for line in rdr:
+                    # Count records
+                    self._numrecords += 1
                     # Add file number to column to be fed into ebLink
                     self._filenum.append(file_count)
                     if file_count == 1:
@@ -279,40 +286,24 @@ class EBlink(object):
         '''
         Private function to build a temporary directory for storing data.
         '''
-        self.tmp_dir = '.tmp-{}'.format(random.randint(0, 10000))
-        bashCommand = 'mkdir {}'.format(self.tmp_dir)
+        self._tmp_dir = '._tmp-{}'.format(random.randint(0, 10000))
+        bashCommand = 'mkdir {}'.format(self._tmp_dir)
         output = subprocess.check_output(['bash','-c', bashCommand])
         now = datetime.today().strftime('%y%m%d-%H:%M:%S')
-        self.tmp = '{}/{}-{:.2}.csv'.format(self.tmp_dir, now, random.random())
+        self._tmp = '{}/{}-{:.2}.csv'.format(self._tmp_dir, now, random.random())
 
     def model(self):
         '''
         Carries out modeling in R.
         '''
-        # Wait to import R objects as it begins an R session and takes memory.
-        import rpy2
-        import rpy2.robjects as ro
-        from rpy2.robjects.packages import importr, data
-        from rpy2.robjects.vectors import DataFrame
-        from rpy2.robjects import pandas2ri
-        pandas2ri.activate()
-        from rpy2.robjects.numpy2ri import numpy2ri
-        ro.conversion.py2ri = numpy2ri
-        rpy2.robjects.activate()
+        results = ri.run_eblink(self._tmp, self.column_types, self.a, self.b, self..iterations, self._filenum, self._numrecords)
 
-        r_base = importr('base')
-        # Import data to link
-        data = DataFrame.from_csvfile(self.tmp)
-        # Set necessary variables
-        ## X.c contains the categorical variables
-        ## X.s contains the string variables
-        ## p.c is the number of categorical variables
-        ## p.s contains the number of string variables
-        robjects.r("p.c <- {}".format(len(filter(lambda x: x == 'C', self.column_types.values()))))
-        robjects.r("p.s <- {}".format(len(filter(lambda x: x == 'S', self.column_types.values()))))
-        # If you have cloned the repo, this should be where the R code is located
-        robjects.r("source('../ebLink-master/R/code/ebGibbsSampler.R', chdir = TRUE)")
-        robjects.r("library(plyr)")
-        # Runs the gibbs sampler
-        print 'Running the data linkage process...'
-        robjects.r("lam.gs <- rl.gibbs(file.num=file.num,X.s=X.s,X.c=X.c,num.gs=10,a=a,b=b,c=c,d=d, M={})".format(self._iterations))
+    def pickle(self, filename):
+        '''
+        Pickles this model & settings for later use.
+        '''
+
+    def write_result(self, filename):
+        '''
+        Writes results of ebLink to file.
+        '''
