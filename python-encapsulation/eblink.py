@@ -3,6 +3,12 @@
 
 # This file is an encapsulation in Python for ebLink, which runs in R.
 # This program requires R to run.
+# ebLink is drawn from Steorts, et. al. 2015 can can be found here:
+#    https://github.com/resteorts/ebLink
+
+## NOTES ##
+# Current build only takes csvs. To add additional file types or connections,
+#    please look at read_iterator.
 
 from datetime import datetime
 import rpy2
@@ -15,7 +21,7 @@ import csv
 from numpy import *
 import scipy as sp
 from pandas import *
-import R_interface as ri
+import pickle
 
 class EBlink(object):
 
@@ -23,6 +29,7 @@ class EBlink(object):
         self._files = []
         self._headers = []
         self._columns = []
+        self._indices = {}
         self._matchcolumns = {}
         self._column_types = {} # Maps first file's columns to Cat or Num
         self.a = None
@@ -33,6 +40,9 @@ class EBlink(object):
         self._tmp_dir = None
         self._tmp = None
         self._interactive = interactive
+        self.pop_est = 0
+        self.result = None
+        self.pairs = None
         if self._interactive == True:
             self._run_interactively()
 
@@ -42,9 +52,9 @@ class EBlink(object):
         self.get_col_types()
         self.build()
         self.define()
-        return
         self.model()
-        self.write_result()
+        self.write_links()
+        self.pickle()
 
     @property
     def files(self):
@@ -137,7 +147,7 @@ class EBlink(object):
         else:
             return
 
-    def set_columns(self, cols=[]):
+    def set_columns(self, count=None, cols=[]):
         '''
         Will take a list containing the columns to be matched for each file,
         treating corresponding indices as matching. For example, an input of
@@ -150,7 +160,8 @@ class EBlink(object):
         Otherwise, can run ly.
         '''
         if self._interactive == True:
-            count = 1
+            if count == None:
+                count = 1
             for f in self._files:
                 print '\nPLEASE INDICATE WHICH COLUMNS IN {} YOU WOULD LIKE TO USE FOR LINKING. Separate each column name with a comma.'.format(f)
                 cols = []
@@ -169,15 +180,33 @@ class EBlink(object):
                         if x not in self._matchcolumns:
                             self._matchcolumns[x] = []
                         self._matchcolumns[x].append(match.strip())
+                self.check_index(count)
                 count += 1
+
             if not self.check_correct():
-                self.set_columns()
+                self.set_columns(count)
+
         else:
             for i in range(len(cols[0])):
                 if cols[0][i] not in self._matchcolumns:
                     self._matchcolumns[cols[0][i]] = []
                 for l in cols[1:]:
                     self._matchcolumns[cols[0][i]].append(l[i])
+
+    def check_index(self, num):
+        '''
+        Asks for an unique ID for a given file.
+        '''
+        answer = None
+        while answer == None:
+            raw_input = '\nDoes this file have a unique ID (Y/N)?'
+        if answer.strip().upper() == 'Y':
+            index = None
+            while index == None:
+                raw_input = '\nPlease specify the unique ID: '
+            self._indices[num] = index
+        else:
+            self._indices[num] = False
 
     def get_col_types(self):
         '''
@@ -289,21 +318,62 @@ class EBlink(object):
         self._tmp_dir = '._tmp-{}'.format(random.randint(0, 10000))
         bashCommand = 'mkdir {}'.format(self._tmp_dir)
         output = subprocess.check_output(['bash','-c', bashCommand])
-        now = datetime.today().strftime('%y%m%d-%H:%M:%S')
+        now = datetime.today().strftime('%y%m%d-%H%M%S')
         self._tmp = '{}/{}-{:.2}.csv'.format(self._tmp_dir, now, random.random())
 
     def model(self):
         '''
-        Carries out modeling in R.
+        Carries out modeling in R. Returns a numpy array
         '''
-        results = ri.run_eblink(self._tmp, self.column_types, self.a, self.b, self..iterations, self._filenum, self._numrecords)
+        import R_interface as ri
+        result, estPopSize = ri.run_eblink(self._tmp, self.column_types, self.a, self.b, self..iterations, self._filenum, self._numrecords)
+        self.pop_est = np.average(estPopSize)
+        del estPopSize
+        p = ri.calc_linkages(result)
+        self.pairs = [tuple(x) for x in p]
+        del result
+
+    def write_links(self):
+        '''
+        Writes identified links to a file.
+        '''
+        all_dupes = []
+        for pair in self.pairs:
+            all_dupes.append(pair[0])
+            all_dupes.append(pair[1])
+
+        newfile = 'results_' + datetime.today().strftime('%y%m%d-%H%M%S')
+        deduped = {}
+
+        uid = 0
+        index = 0
+            for i in range(len(self._files)):
+                fp = self._files[i]
+                f = open(fp, 'r')
+                rdr = csv.reader(f)
+                headers = rdr.next()
+                unique = self._indices[i]
+                uni_index = headers.get_index(unique)
+                for line in rdr:
+                    if self._filenum[index] == (i + 1) and index not in all_dupes:
+                        if uid not in deduped and :
+                            deduped[uid] = []
+                        deduped[uid].append(line[uni_index])
+                        uid += 1
+                        index += 1
+                    else:
+                        break
 
     def pickle(self, filename):
         '''
         Pickles this model & settings for later use.
         '''
+        f = open(filename, 'w')
+        pickle.dump(self, f)
+        f.close()
+        return True
 
-    def write_result(self, filename):
+    def write(self, obj, filename):
         '''
         Writes results of ebLink to file.
         '''

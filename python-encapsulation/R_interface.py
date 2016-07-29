@@ -3,6 +3,8 @@
 # 7-29-2016
 
 # This code provides an interface for running ebLink through Python.
+# ebLink was developed in Steorts, et. al. 2015. R code is directly adapated
+# from their repository:
 
 import os
 import rpy2.robjects as ro
@@ -44,7 +46,7 @@ def run_eblink(tmp, tmp_dir, column_types, a, b, iterations, filenum, numrecords
     # Subjective choices for distortion probability prior
     a = ro.IntVector([a])
     b = ro.IntVector([b])
-    # Steepness parameter; pre-set to recommended
+    # Steepness parameter; pre-set to recommended value
     c = ro.IntVector([STEEPNESS])
     # Edit distance function; can be swapped for others if desired
     ro.r("d <- function(string1,string2){adist(string1,string2)}")
@@ -54,14 +56,33 @@ def run_eblink(tmp, tmp_dir, column_types, a, b, iterations, filenum, numrecords
     plyr = importr("plyr")
     # Move to tmp directory to save results file
     os.chdir(tmp_dir)
-    print 'Running the data linkage process...'
+    print 'Running the gibbs sampler...'
     # Runs the gibbs sampler
     gibbs = ro.r['rl.gibbs']
     lam = gibbs(file_num = fn, X_s = xs, X_c=xc, num_gs=g, a=a, b=b, c=c, d=d, M=m)
     os.chdir('..')
-    # ro.r("lam.gs <- rl.gibbs(file.num=file.num,X.s=X.s,X.c=X.c,num.gs=10,a=a,b=b,c=c,d=d, M={})".format(iterations))
+    # Calculate estimated population sizes by finding number of uniques
     appl = ro.r['apply']
     ro.r("len_uniq <- function(x){length(unique(x))}")
     len_uniq = ro.r['len_uniq']
-    estPopSize = ro.r(appl(lam, 1, len_uniq))
-    return np.array(lam)
+    estPopSize = appl(lam, 1, len_uniq)
+
+    return np.array(lam), np.array(estPopSize)
+
+def calc_linkages(linkage):
+    '''
+    Finds Maximal Matching Sets (MMS) based on a single linkage structure.
+    Linkage should be a numpy array resulting from calling the ebLink code.
+
+    Returns pairs of entries that have been matched using their entry number
+    in the tmp file.
+    '''
+    pandas2ri.activate()
+    link_pack = ro.r("source('../ebLink-master/R/code/analyzeGibbs.R', chdir = TRUE)")
+    links = ro.r['links']
+    matrix = ro.r['as.matrix']
+    linkage = matrix(linkage)
+    est_links = links(linkage)
+    pairwise = ro.r['pairwise']
+    pairs = pairwise(est_links)
+    return np.array(pairs)
