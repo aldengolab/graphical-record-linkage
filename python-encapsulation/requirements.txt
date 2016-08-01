@@ -1,0 +1,5 @@
+# Requirements for ebLink python encapsulation
+
+pip install rpy2
+pip install pandas
+pip install numpy
