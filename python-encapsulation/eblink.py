@@ -53,6 +53,7 @@ class EBlink(object):
         self.build()
         self.define()
         self.model()
+        return
         self.write_links()
         self.pickle()
 
@@ -128,7 +129,7 @@ class EBlink(object):
         '''
         answer = ''
         while answer.strip().upper() != 'Y' and answer.strip().upper() != 'N':
-            answer = raw_input('\nARE THESE SETINGS CORRECT (Y/N)? ')
+            answer = raw_input('\nARE THESE SETTINGS CORRECT (Y/N)? ')
         if answer.upper().strip() == 'N':
             return False
         else:
@@ -199,14 +200,15 @@ class EBlink(object):
         '''
         answer = None
         while answer == None:
-            raw_input = '\nDoes this file have a unique ID (Y/N)?'
+            answer = raw_input('\nDoes this file have a unique ID (Y/N)? ')
         if answer.strip().upper() == 'Y':
             index = None
             while index == None:
-                raw_input = '\nPlease specify the unique ID: '
+                index = raw_input('\nPlease specify the unique ID: ')
             self._indices[num] = index
         else:
             self._indices[num] = False
+        return
 
     def get_col_types(self):
         '''
@@ -261,7 +263,7 @@ class EBlink(object):
             print 'Only one file found. Please set additional files.'
             return
 
-        self.build_directory()
+        self._build_directory()
         columns = self._columns[0]
 
         with open(self._tmp, 'w') as dest:
@@ -326,43 +328,69 @@ class EBlink(object):
         Carries out modeling in R. Returns a numpy array
         '''
         import R_interface as ri
-        result, estPopSize = ri.run_eblink(self._tmp, self.column_types, self.a, self.b, self..iterations, self._filenum, self._numrecords)
+        result, estPopSize = ri.run_eblink(self._tmp, self._tmp_dir,
+         self.column_types, self.a, self.b, self.iterations, self._filenum,
+         self._numrecords)
         self.pop_est = np.average(estPopSize)
         del estPopSize
         p = ri.calc_linkages(result)
         self.pairs = [tuple(x) for x in p]
         del result
 
-    def write_links(self):
+    def write_links(self, filename=None):
         '''
         Writes identified links to a file.
         '''
-        all_dupes = []
-        for pair in self.pairs:
-            all_dupes.append(pair[0])
-            all_dupes.append(pair[1])
+        lookup_pairs = {x[0]:x[1] for x in link.pairs}
+        lookup_pairs.update({x[1]:x[0] for x in link.pairs})
+        all_dupes = lookup_pairs.values()
 
-        newfile = 'results_' + datetime.today().strftime('%y%m%d-%H%M%S')
+        newfile = 'crosswalk_' + datetime.today().strftime('%y%m%d-%H%M%S') + '.csv'
         deduped = {}
 
-        uid = 0
-        index = 0
-            for i in range(len(self._files)):
-                fp = self._files[i]
-                f = open(fp, 'r')
-                rdr = csv.reader(f)
-                headers = rdr.next()
-                unique = self._indices[i]
-                uni_index = headers.get_index(unique)
-                for line in rdr:
-                    if self._filenum[index] == (i + 1) and index not in all_dupes:
-                        if uid not in deduped and :
-                            deduped[uid] = []
-                        deduped[uid].append(line[uni_index])
-                        uid += 1
-                        index += 1
+        new_id = 0
+        filenum_index = 0
+        for i in range(len(self._files)):
+            fp = self._files[i]
+            f = open(fp, 'r')
+            rdr = csv.reader(f)
+            headers = rdr.next()
+            # Grab unique from indices private attribute
+            unique = self._indices[i]
+            # Get the index within this data file
+            uni_index = headers.get_index(unique)
+            for line in rdr:
+                # Check that files align and that this entry isn't duplicated
+                if self._filenum[filenum_index] == (i + 1) and filenum_index not in all_dupes:
+                    # Add the unique id from original file
+                    deduped[new_id] = [line[uni_index]]
+                    new_id += 1
+                    filenum_index += 1
+                elif self._filenum[filenum_index] == (i + 1) and filenum_index in all_dupes:
+                    deduped_id = self._look_up(deduped, lookup_pairs[filenum_index])
+                    if deduped_id:
+                        deduped[deduped_id].append(line[uni_index])
                     else:
-                        break
+                        deduped[new_id] = [line[uni_index]]
+                else:
+                    print "WARNING: File numbers don't match."
+                new_id += 1
+                filenum_index += 1
+            f.close()
+
+        self.crosswalk = deduped
+
+    def _look_up(self, deduped, i):
+        '''
+        Takes filenum_index and returns the matching key, if it is already
+        in the deduped dict.
+        '''
+        if i in deduped.values():
+            for k, v in deduped:
+                if i in v:
+                    return k
+        else:
+            return False
 
     def pickle(self, filename):
         '''
@@ -377,3 +405,4 @@ class EBlink(object):
         '''
         Writes results of ebLink to file.
         '''
+        pd.to_csv(obj, filename)
