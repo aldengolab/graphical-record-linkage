@@ -339,7 +339,7 @@ class EBlink(object):
 
     def write_links(self, filename=None):
         '''
-        Writes identified links to a file.
+        Writes identified links to a file using UIDs.
         '''
         lookup_pairs = {x[0]:x[1] for x in link.pairs}
         lookup_pairs.update({x[1]:x[0] for x in link.pairs})
@@ -361,24 +361,24 @@ class EBlink(object):
             uni_index = headers.get_index(unique)
             for line in rdr:
                 # Check that files align and that this entry isn't duplicated
-                if self._filenum[filenum_index] == (i + 1) and filenum_index not in all_dupes:
+                if self._filenum[filenum_index] != (i + 1):
+                    print "WARNING: File numbers don't match."
+                elif filenum_index not in all_dupes:
                     # Add the unique id from original file
                     deduped[new_id] = [line[uni_index]]
                     new_id += 1
                     filenum_index += 1
-                elif self._filenum[filenum_index] == (i + 1) and filenum_index in all_dupes:
+                elif filenum_index in all_dupes:
                     deduped_id = self._look_up(deduped, lookup_pairs[filenum_index])
                     if deduped_id:
                         deduped[deduped_id].append(line[uni_index])
                     else:
                         deduped[new_id] = [line[uni_index]]
-                else:
-                    print "WARNING: File numbers don't match."
                 new_id += 1
                 filenum_index += 1
             f.close()
 
-        self.crosswalk = deduped
+        self.crosswalk = pd.DataFrame(deduped)
 
     def _look_up(self, deduped, i):
         '''
@@ -403,6 +403,15 @@ class EBlink(object):
 
     def write(self, obj, filename):
         '''
-        Writes results of ebLink to file.
+        Writes results of ebLink object to file.
         '''
-        pd.to_csv(obj, filename)
+        if filename == None:
+            filename = datetime.today().strftime('%y%m%d-%H%M%S') + '.ebout'
+        try:
+            pd.to_csv(obj, filename)
+        except:
+            try:
+                pd.to_csv(pd.DataFrame(obj), filename)
+            except:
+                with open(filename, w) as f:
+                    f.write(obj)
