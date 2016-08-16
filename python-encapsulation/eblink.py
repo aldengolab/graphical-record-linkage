@@ -46,8 +46,9 @@ class EBlink(object):
         if self._interactive == True:
             self._run_interactively()
 
-    def _run_interactively(self):
-        self.set_files()
+    def _run_interactively(self, files=True):
+        if files==True:
+            self.set_files()
         self.set_columns()
         self.get_col_types()
         self.build()
@@ -406,7 +407,7 @@ class EBlink(object):
         Writes results of ebLink object to file.
         '''
         if filename == None:
-            filename = datetime.today().strftime('%y%m%d-%H%M%S') + '.ebout'
+            filename = 'links_' + datetime.today().strftime('%y%m%d-%H%M%S') + '.ebout'
         try:
             pd.to_csv(obj, filename)
         except:
