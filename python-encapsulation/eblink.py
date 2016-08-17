@@ -324,7 +324,7 @@ class EBlink(object):
             return (reader, f)
 
         ### petl functionality for use with Urban ETL ###
-        if 'petl' in str(type(table)):
+        if 'petl' in str(type(filepath)):
             return (iter(filepath), 'tuple')
 
         ### Error Message ###
