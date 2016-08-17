@@ -25,37 +25,36 @@ import pickle
 
 class EBlink(object):
 
-    def __init__(self, interactive=False):
-        self._files = []
-        self._headers = []
-        self._columns = []
-        self._indices = {}
-        self._matchcolumns = {}
+    def __init__(self, interactive=False, files=[]):
+        self._files = files # A list of filepaths or, possibly, python objects
+        self._columns = [] # Contains columns to use from first file
+        self._indices = {} # Specifies UIDs
+        self._matchcolumns = {} # Contains lists mapping columns in other files to self._columns
         self._column_types = {} # Maps first file's columns to Cat or Num
-        self.a = None
-        self.b = None
-        self._numrecords = 0
-        self.iterations = 0
-        self._filenum = []
-        self._tmp_dir = None
-        self._tmp = None
-        self._interactive = interactive
-        self.pop_est = 0
-        self.result = None
-        self.pairs = None
+        self.a = None # Alpha value for prior
+        self.b = None # Beta value for prior
+        self._numrecords = 0 # Number of records
+        self.iterations = 0 # Number of gibbs iterations to runs
+        self._filenum = [] # Labels each entry in joined CSV with file number from self._files
+        self._tmp_dir = None # Directory where temp files are stored
+        self._tmp = None # Temporary csv for use in link
+        self._interactive = interactive # Whether this will be run interactively
+        self.pop_est = 0 # De-duplicated/linked population estimated by ebLink
+        self.pairs = None # Pairs linked by ebLink
+        self.crosswalk = None # Crosswalk of UIDs
+        self._crosswalk_file = None # File where crosswalk is saved
         if self._interactive == True:
             self._run_interactively()
 
-    def _run_interactively(self, files=True):
-        if files==True:
+    def _run_interactively(self):
+        if self.files==[]:
             self.set_files()
         self.set_columns()
         self.get_col_types()
         self.build()
         self.define()
         self.model()
-        return
-        self.write_links()
+        self.build_crosswalk()
         self.pickle()
 
     @property
@@ -274,10 +273,16 @@ class EBlink(object):
             for f in self._files:
                 rdr, fi = self.read_iterator(f)
                 headers = rdr.next()
+                # In case iterator returns tuples instead of lists
+                if type(headers) == tuple:
+                    headers = list(headers)
                 if file_count == 1:
                     wtr.writerow(columns)
                 # For each line in that file
                 for line in rdr:
+                    # In case iterator returns tuples instead of lists
+                    if type(line) == tuple:
+                        line = list(line)
                     # Count records
                     self._numrecords += 1
                     # Add file number to column to be fed into ebLink
@@ -295,7 +300,8 @@ class EBlink(object):
                             index = headers.index(self._matchcolumns[col][file_count-2])
                             row.append(line[index])
                     wtr.writerow(row)
-                fi.close()
+                if fi:
+                    fi.close()
                 file_count += 1
 
     def read_iterator(self, filepath):
@@ -303,14 +309,25 @@ class EBlink(object):
         Takes a filepath and returns an iterator. Iterator returns each line as
         a list of elements, much like csv writer. Must return headers as first
         line. Should pass back two values, first is iterator, second is file
-        instance (if necessary).
+        instance (can be None).
+
+        All returned iterators must work with both .next() and for loops. Can
+        return tuples or lists, where each column is a separate tuple or list
+        entry.
 
         **ADD NEW CONNECTIONS/FILE TYPES HERE**
         '''
+        ### CSV ###
         if 'csv' in filepath:
             f = open(filepath, 'r')
             reader = csv.reader(f)
             return (reader, f)
+
+        ### petl functionality for use with Urban ETL ###
+        if 'petl' in str(type(table)):
+            return (iter(filepath), 'tuple')
+
+        ### Error Message ###
         else:
             raise NameError('This file type or connection is not yet supported.')
 
@@ -338,7 +355,7 @@ class EBlink(object):
         self.pairs = [tuple(x) for x in p]
         del result
 
-    def write_links(self, filename=None):
+    def build_crosswalk(self):
         '''
         Writes identified links to a file using UIDs.
         '''
@@ -346,7 +363,6 @@ class EBlink(object):
         lookup_pairs.update({x[1]:x[0] for x in link.pairs})
         all_dupes = lookup_pairs.values()
 
-        newfile = 'crosswalk_' + datetime.today().strftime('%y%m%d-%H%M%S') + '.csv'
         deduped = {}
 
         new_id = 0
@@ -393,10 +409,12 @@ class EBlink(object):
         else:
             return False
 
-    def pickle(self, filename):
+    def pickle(self, filename=None):
         '''
         Pickles this model & settings for later use.
         '''
+        if filename == None:
+            filename = 'eblink_' + datetime.today().strftime('%y%m%d-%H%M%S') + '.pkl'
         f = open(filename, 'w')
         pickle.dump(self, f)
         f.close()
