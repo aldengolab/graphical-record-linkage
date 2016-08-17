@@ -1,0 +1,12 @@
+Package: ebLink
+Type: Package
+Title: Record Linkage pack for empirically motivated prior
+Version: 0.1.0
+Authors@R: person("Rebecca C.", "Steorts", email = "beka@stat.duke.edu", role = c("aut", "cre"))
+Maintainer: <beka@stat.duke.edu>
+Depends: R (>= 3.2.4)
+Description: This package contains code that corresponding to the paper "Empirically Motivated Bayesian Record Linkage", (Bayesian Analysis, 2015).
+License: GPL-3
+YEAR: <2016>
+LazyData: TRUE
+RoxygenNote: 5.0.1

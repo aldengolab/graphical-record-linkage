@@ -1,0 +1,146 @@
+---
+title: "Introduction to ebLink package"
+author: "Rebecca C. Steorts"
+date: "`r Sys.Date()`"
+output: 
+    rmarkdown::html_vignette:
+        fig_caption: yes
+vignette: >
+  %\VignetteIndexEntry{Vignette Title}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+We present a small example from "Entity Resolution with Emprically Motivated Priors", Bayesian Analysis, (10),4:849-975. We will be using the RecordLinkage package in R and the RLdata500 data set. 
+
+The ebLink package removes duplicate entries from multiple databases using the method outlined in the paper above. We illustrate an example of using this package using a German dataset comprised of first and last name and full date of birth.
+
+Our goals include
+
+- Presenting the RLdata500 dataset with summary information.
+- Illustrating how we can format the RLdata500 dataset to work with the ebLink package
+- Examples for setting the tuning parameters for ebLink
+- Running the Gibbs sampler in ebLink
+- Illustrating a few plots and sample output
+
+## Understanding the RLdata500 dataset
+
+The RLdata500 dataset exists already in the RecordLinkage package in R. We review this data set for the user. 
+
+The RLdata500 data consists of 500 records with 10 percent duplication. Thus, there are 450 unique individuals. There is full information on each record containing first name, last name, and full date of birth. 
+
+We first load the Record Linkgae package and load the RLdata500 data set. We also, provide the first few lines of the data. 
+
+```{r, echo=TRUE, message=FALSE}
+library(RecordLinkage)
+data("RLdata500")
+head(RLdata500)
+```
+
+## Preparing the data
+
+Next, we prepare the data for working with the ebLink package. 
+
+```{r}
+# X.c contains the categorical variables
+# X.s contains the string variables 
+# p.c is the number of categorical variables
+# p.s contains the number of string variables
+X.c <- RLdata500[c("by","bm","bd")]
+X.c <- as.matrix(RLdata500[,"bd"],ncol=1)
+p.c <- ncol(X.c)
+X.s <- as.matrix(RLdata500[-c(2,4,7)])
+p.s <- ncol(X.s)
+```
+
+## Setting the Tuning Parameters
+
+Now, we give a small example for setting the tuning parameters before running the Gibbs sampler.
+
+First, we work with a file number identifier.
+```{r}
+# File number identifier
+# Note: Recall that X.c and X.s include all files "stacked" on top of each other.
+# The vector below keeps track of which rows of X.c and X.s are in which files.
+file.num <- rep(c(1,2,3),c(200,150,150))
+```
+
+Next, we work with the parameters that tune the prior on the amount of distortion that goes into the model. 
+```{r}
+# Subjective choices for distortion probability prior
+a <-1
+b <- 999
+```
+
+Then we write a function for the Edit distance between two strings. Other distance functions could be used, such as Jaro-Winkler.  
+```{r}
+d <- function(string1,string2){adist(string1,string2)}
+```
+
+For the steepness parameter, we recommend
+```{r}
+c <- 1
+```
+
+## The Gibbs Sampler for ebLink
+We now run a test version of the Gibbs sampler using ebLink, with 10 Gibbs iterations and a maximum size of M=500 (assuming the overall known population size is 500).
+
+```{r,results="hide"}
+source('~/work_on/Rpackage/ebLink/R/code/ebGibbsSampler.R', chdir = TRUE)
+library(plyr)
+system.time(lam.gs <- rl.gibbs(file.num=file.num,X.s=X.s,X.c=X.c,num.gs=10,a=a,b=b,c=c,d=d, M=500))
+```
+
+## Summary information of ebLink
+
+Let's read in the estimate linkage structure using 10 Gibbs iterations.
+
+```{r, fig.show="hold", fig.cap="The red line is the ground truth (450), which is not close to the estimate (500) since we only ran 10 Gibbs sampling iterations."}
+estLink <- as.matrix(read.table("SampleLinkage.txt",header=TRUE))
+estPopSize <- apply(estLink , 1, function(x) {length(unique(x))})
+plot(density(estPopSize),xlim=c(300,500),main="",lty=1, "Observed Population Size", ylim= c(0,1))
+abline(v=450,col="red")
+abline(v=mean(estPopSize),col="black",lty=2)
+mean(estPopSize)
+sd(estPopSize)
+```
+
+Next, we illustrate an example of what we did in the paper for this dataset. 
+Show the same example, show the error rates, show the comparisons with other methods. Show convergence rates. 
+
+We have run the Gibbs sampler for X iterations as done before and now read in the output. 
+
+```{r,show="hold", fig.cap="The red line is the ground truth (450), which we find to be very close to posterior mean of 445."}
+estLink <- as.matrix(read.table("sampleLinkage2.txt",header=TRUE))
+dim(estLink)
+estPopSize <- apply(estLink , 1, function(x) {length(unique(x))})
+plot(density(estPopSize),xlim=c(300,500),main="",lty=1, "Observed Population Size", ylim= c(0,1))
+abline(v=450,col="red")
+abline(v=mean(estPopSize),col="black",lty=2)
+mean(estPopSize)
+sd(estPopSize)
+```
+
+Next, we look at the error rates using ebLink. We are able to calculate these since the data contains unique ids. 
+
+```{r}
+source('~/work_on/Rpackage/ebLink/R/code/analyzeGibbs.R', chdir = TRUE)
+system.time(est.links <- links(estLink))  #17.6s
+est.links.pair <- pairwise(est.links)
+system.time(links(matrix(identity.RLdata500,nrow=1)))
+# Note: This is hundreds of times faster than the GS itself.  Time is not
+# a problem here.
+true.links <- links(matrix(identity.RLdata500,nrow=1))
+true.links.pair <- pairwise(true.links)
+# Correct, incorrect, and missing links
+comparison <- links.compare(est.links.pair,true.links.pair,counts.only=TRUE)
+comparison
+
+missing.links <- comparison$missing
+true.links<-comparison$correct 
+false.links <- comparison$incorrect
+truth.links <- true.links+false.links
+fpr = false.links/truth.links
+fnr = missing.links/truth.links
+fdr = false.links/(true.links+false.links)
+(fnr,fdr)
+```
