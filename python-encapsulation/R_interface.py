@@ -31,9 +31,9 @@ def run_eblink(tmp, tmp_dir, column_types, a, b, iterations, filenum, numrecords
     ## p.c is the number of categorical variables
     ## p.s contains the number of string variables
     matrix = ro.r['as.matrix']
-    c_cols = [x for x in column_types if column_types[x] == 'C']
+    c_cols = [x for x in column_types if column_types[x].upper() == 'C']
     xc = matrix(data[c_cols])
-    s_cols = [x for x in column_types if column_types[x] == 'S']
+    s_cols = [x for x in column_types if column_types[x].upper() == 'S']
     xs = matrix(data[s_cols])
     pc = ro.IntVector([len(filter(lambda x: x == 'C', column_types.values()))])
     ps = ro.IntVector([len(filter(lambda x: x == 'S', column_types.values()))])
@@ -51,8 +51,8 @@ def run_eblink(tmp, tmp_dir, column_types, a, b, iterations, filenum, numrecords
     # Edit distance function; can be swapped for others if desired
     ro.r("d <- function(string1,string2){adist(string1,string2)}")
     d = ro.r['d']
-    # If you have cloned the repo, this should be where the R code is located
-    eb_pack = ro.r("source('../ebLink-master/R/code/ebGibbsSampler.R', chdir = TRUE)")
+    # Loads in Gibbs sampler and plyr packages
+    eb_pack = ro.r("source('{}', chdir = TRUE)".format(find('ebGibbsSampler.R', '.')))
     plyr = importr("plyr")
     # Move to tmp directory to save results file
     os.chdir(tmp_dir)
@@ -78,7 +78,7 @@ def calc_linkages(linkage):
     in the tmp file.
     '''
     pandas2ri.activate()
-    link_pack = ro.r("source('../ebLink-master/R/code/analyzeGibbs.R', chdir = TRUE)")
+    link_pack = ro.r("source('{}', chdir = TRUE)".format(find('analyzeGibbs.R', '.')))
     links = ro.r['links']
     matrix = ro.r['as.matrix']
     linkage = matrix(linkage)
@@ -86,3 +86,11 @@ def calc_linkages(linkage):
     pairwise = ro.r['pairwise']
     pairs = pairwise(est_links)
     return np.array(pairs)
+
+def find(name, path):
+    '''
+    Looks for a file name in a given path.
+    '''
+    for root, dirs, files in os.walk(path):
+        if name in files:
+            return os.path.join(root, name)

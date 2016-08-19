@@ -26,23 +26,29 @@ import pickle
 class EBlink(object):
 
     def __init__(self, interactive=False, files=[]):
+        ## File locations & directories
         self._files = files # A list of filepaths or, possibly, python objects
-        self._columns = [] # Contains columns to use from first file
-        self._indices = {} # Specifies UIDs
-        self._matchcolumns = {} # Contains lists mapping columns in other files to self._columns
-        self._column_types = {} # Maps first file's columns to Cat or Num
-        self.a = None # Alpha value for prior
-        self.b = None # Beta value for prior
-        self._numrecords = 0 # Number of records
-        self.iterations = 0 # Number of gibbs iterations to runs
-        self._filenum = [] # Labels each entry in joined CSV with file number from self._files
         self._tmp_dir = None # Directory where temp files are stored
         self._tmp = None # Temporary csv for use in link
+        self._crosswalk_file = None # File where crosswalk is saved
         self._interactive = interactive # Whether this will be run interactively
+        ## Inputs
+        self._columns = [] # Contains columns to use from first file
+        self._indices = {} # Specifies UID columns for each file
+        self._matchcolumns = {} # Contains lists mapping columns in other files to self._columns
+        self._column_types = {} # Maps first file's columns to String or Categorical
+        ## Subjective inputs
+        self.a = None # Alpha value for prior
+        self.b = None # Beta value for prior
+        self.iterations = 0 # Number of gibbs iterations to run
+        ## Constructed inputs
+        self._numrecords = 0 # Number of records
+        self._filenum = [] # Labels each entry in joined CSV with file number from self._files
+        ## Outputs from ebLink
         self.pop_est = 0 # De-duplicated/linked population estimated by ebLink
         self.pairs = None # Pairs linked by ebLink
-        self.crosswalk = None # Crosswalk of UIDs
-        self._crosswalk_file = None # File where crosswalk is saved
+        self.crosswalk = [] # Crosswalk of UIDs
+        ## Interactive mode
         if self._interactive == True:
             self._run_interactively()
 
@@ -88,7 +94,7 @@ class EBlink(object):
         Sets the files to use for linkage. Takes a list of filepaths or a single
         filepath. All files must have headers.
         '''
-        if delete:
+        if delete: # This is for a redo function
             self._files = []
             print 'Files: {}'.format(self._files)
             return
@@ -157,8 +163,6 @@ class EBlink(object):
         file 2.
 
         Yields a dict of {file1_column: [file2column,...,fileNcolumn]}.
-
-        Otherwise, can run ly.
         '''
         if self._interactive == True:
             if count == None:
@@ -325,7 +329,7 @@ class EBlink(object):
 
         ### petl functionality for use with Urban ETL ###
         if 'petl' in str(type(filepath)):
-            return (iter(filepath), 'tuple')
+            return (iter(filepath), None)
 
         ### Error Message ###
         else:
@@ -351,63 +355,91 @@ class EBlink(object):
          self._numrecords)
         self.pop_est = np.average(estPopSize)
         del estPopSize
-        p = ri.calc_linkages(result)
-        self.pairs = [tuple(x) for x in p]
+        print "Estimated population size: ", self.pop_est
+        print "Total number of records: ", self._numrecords
+        if self.pop_est <= self._numrecords - 1:
+            # Only look for linked pairs if there are pairs to look for
+            p = ri.calc_linkages(result)
+            self.pairs = [tuple(x) for x in p]
         del result
 
     def build_crosswalk(self):
         '''
         Writes identified links to a file using UIDs.
         '''
-        lookup_pairs = {x[0]:x[1] for x in link.pairs}
-        lookup_pairs.update({x[1]:x[0] for x in link.pairs})
-        all_dupes = lookup_pairs.values()
+        if not self.pairs: # Don't run this if there aren't any pairs
+            print 'No pairs identified.'
+            return
 
-        deduped = {}
+        lookup_pairs = {} # Create a dict to look-up pairs of entries
+        for pair in self.pairs:
+            lookup_pairs = self._add_to_dict(lookup_pairs, pair[0], pair[1])
+        print lookup_pairs
+        rv = {} # This is the output data set
+        new_id = 0 # This is a new, uninteresting id for building rv
+        filenum_index = 0 # This is for indexing into the self.filenum object
+        placed = {} # Memo
 
-        new_id = 0
-        filenum_index = 0
+        # Go through each file and read through all the objects
         for i in range(len(self._files)):
             fp = self._files[i]
-            f = open(fp, 'r')
-            rdr = csv.reader(f)
-            headers = rdr.next()
-            # Grab unique from indices private attribute
-            unique = self._indices[i]
-            # Get the index within this data file
-            uni_index = headers.get_index(unique)
+            rdr, fi = self.read_iterator(fp)
+            headers = list(rdr.next()) # Get headers for this file
+            unique = self._indices[i] # Grab UID name this file from build
+            uni_index = headers.index(unique) # Get the index for the UID within this file
+
             for line in rdr:
-                # Check that files align and that this entry isn't duplicated
+                line = list(line)
+                # Check that file and filenum specified align
                 if self._filenum[filenum_index] != (i + 1):
-                    print "WARNING: File numbers don't match."
-                elif filenum_index not in all_dupes:
-                    # Add the unique id from original file
-                    deduped[new_id] = [line[uni_index]]
+                    print "WARNING: File numbers don't match for entry {}.".format(filenum_index)
+                    print 'Listed file {} should be {}.'.format(self._filenum[filenum_index], i + 1)
+                    print "Aborting. Check inputs for mismatch."
+
+                    print filenum_index
+                    print self._filenum[filenum_index + 1], 'next'
+                    print self._filenum
+                    print rv
+
+                    return
+
+                # Check if this entry has matches that are already placed
+                placed_matches = []
+                if filenum_index in lookup_pairs:
+                    placed_matches = [x for x in lookup_pairs[filenum_index] if x in placed]
+                    print placed_matches
+
+                if len(placed_matches) > 0:
+                    # If so, then add this UID to that entry
+                    match_index = placed[placed_matches[0]]
+                    rv[match_index][i] = line[uni_index]
+                    placed[filenum_index] = match_index
+                    filenum_index += 1
+                else:
+                    # Else add the unique id from original file for a new id
+                    rv[new_id] = ['' for y in range(len(self._files))]
+                    rv[new_id][i] = line[uni_index]
+                    placed[filenum_index] = new_id
                     new_id += 1
                     filenum_index += 1
-                elif filenum_index in all_dupes:
-                    deduped_id = self._look_up(deduped, lookup_pairs[filenum_index])
-                    if deduped_id:
-                        deduped[deduped_id].append(line[uni_index])
-                    else:
-                        deduped[new_id] = [line[uni_index]]
-                new_id += 1
-                filenum_index += 1
-            f.close()
+            if fi:
+                fi.close()
 
-        self.crosswalk = pd.DataFrame(deduped)
+        self.crosswalk = rv
 
-    def _look_up(self, deduped, i):
+    def _add_to_dict(self, dict, value1, value2):
         '''
-        Takes filenum_index and returns the matching key, if it is already
-        in the deduped dict.
+        Adds both values and redundantly refers them to one another in dict.
         '''
-        if i in deduped.values():
-            for k, v in deduped:
-                if i in v:
-                    return k
-        else:
-            return False
+        if value1 not in dict:
+            dict[value1] = [value2]
+        elif value1 in dict:
+            dict[value1].append(value2)
+        if value2 not in dict:
+            dict[value2] = [value1]
+        elif value2 in dict:
+            dict[value2].append(value1)
+        return dict
 
     def pickle(self, filename=None):
         '''
@@ -434,3 +466,10 @@ class EBlink(object):
             except:
                 with open(filename, w) as f:
                     f.write(obj)
+
+    def clean_tmp(self):
+        '''
+        Deletes the tmp folder.
+        '''
+        subprocess.call('rm -r {}'.format(self._tmp_dir), shell=True)
+        print 'Temp folder deleted.'
