@@ -47,7 +47,7 @@ class EBlink(object):
         ## Outputs from ebLink
         self.pop_est = 0 # De-duplicated/linked population estimated by ebLink
         self.pairs = None # Pairs linked by ebLink
-        self.crosswalk = [] # Crosswalk of UIDs
+        self.crosswalk = None # Crosswalk of UIDs
         ## Interactive mode
         if self._interactive == True:
             self._run_interactively()
@@ -366,6 +366,8 @@ class EBlink(object):
     def build_crosswalk(self):
         '''
         Writes identified links to a file using UIDs.
+
+        ## This function uses Pandas and may need to be edited for scaling! ##
         '''
         if not self.pairs: # Don't run this if there aren't any pairs
             print 'No pairs identified.'
@@ -374,7 +376,6 @@ class EBlink(object):
         lookup_pairs = {} # Create a dict to look-up pairs of entries
         for pair in self.pairs:
             lookup_pairs = self._add_to_dict(lookup_pairs, pair[0], pair[1])
-        print lookup_pairs
         rv = {} # This is the output data set
         new_id = 0 # This is a new, uninteresting id for building rv
         filenum_index = 0 # This is for indexing into the self.filenum object
@@ -394,25 +395,30 @@ class EBlink(object):
                 if self._filenum[filenum_index] != (i + 1):
                     print "WARNING: File numbers don't match for entry {}.".format(filenum_index)
                     print 'Listed file {} should be {}.'.format(self._filenum[filenum_index], i + 1)
-                    print "Aborting. Check inputs for mismatch."
-
-                    print filenum_index
-                    print self._filenum[filenum_index + 1], 'next'
-                    print self._filenum
-                    print rv
-
+                    print 'Aborting. Check inputs for mismatch.'
+                    print 'Index with error: ', filenum_index
+                    print self._filenum[filenum_index + 1], ' is next.'
+                    print 'Filenum: ', self._filenum
                     return
 
                 # Check if this entry has matches that are already placed
                 placed_matches = []
                 if filenum_index in lookup_pairs:
                     placed_matches = [x for x in lookup_pairs[filenum_index] if x in placed]
-                    print placed_matches
 
                 if len(placed_matches) > 0:
                     # If so, then add this UID to that entry
                     match_index = placed[placed_matches[0]]
-                    rv[match_index][i] = line[uni_index]
+                    # If there's already an entry in this column, it means that
+                    # ebLink has detected a duplicate within the data file.
+                    # This will be recorded as a tuple, but can be ignored
+                    # later.
+                    if rv[match_index][i] != '':
+                        old = rv[match_index][i]
+                        rv[match_index][i] = (old, line[uni_index])
+                    # Otherwise just add the new UID
+                    else:
+                        rv[match_index][i] = line[uni_index]
                     placed[filenum_index] = match_index
                     filenum_index += 1
                 else:
@@ -425,7 +431,8 @@ class EBlink(object):
             if fi:
                 fi.close()
 
-        self.crosswalk = rv
+        # Place crosswalk into attributes as a Pandas Dataframe
+        self.crosswalk = pd.DataFrame.from_dict(rv, orient='index')
 
     def _add_to_dict(self, dict, value1, value2):
         '''
