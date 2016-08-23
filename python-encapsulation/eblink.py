@@ -38,8 +38,8 @@ class EBlink(object):
         self._matchcolumns = {} # Contains lists mapping columns in other files to self._columns
         self._column_types = {} # Maps first file's columns to String or Categorical
         ## Subjective inputs
-        self.a = None # Alpha value for prior
-        self.b = None # Beta value for prior
+        self.alpha = None # Alpha value for prior
+        self.beta = None # Beta value for prior
         self.iterations = 0 # Number of gibbs iterations to run
         ## Constructed inputs
         self._numrecords = 0 # Number of records
@@ -48,6 +48,7 @@ class EBlink(object):
         self.pop_est = 0 # De-duplicated/linked population estimated by ebLink
         self.pairs = None # Pairs linked by ebLink
         self.crosswalk = None # Crosswalk of UIDs
+        self._lookup_pairs = {} # Create a dict to look-up pairs of entries
         ## Interactive mode
         if self._interactive == True:
             self._run_interactively()
@@ -57,11 +58,15 @@ class EBlink(object):
             self.set_files()
         self.set_columns()
         self.get_col_types()
-        self.build()
+        self.betauild()
         self.define()
         self.model()
-        self.build_crosswalk()
+        self.betauild_crosswalk()
         self.pickle()
+
+    ########################################################
+    ################## Attribute Methods ###################
+    ########################################################
 
     @property
     def files(self):
@@ -72,11 +77,18 @@ class EBlink(object):
         if type(files) == list and len(filter(lambda x: os.path.isfile(x), files)) == len(files):
             self._files = files
         else:
-            raise NameError('Filename(s) poorly formed.')
+            raise TypeError('Filename(s) input poorly formatted.')
 
     @property
     def columns(self):
         return self._columns
+
+    @columns.setter
+    def column_setter(self, columns):
+        if type(columns) == list:
+            self._columns = columns
+        else:
+            raise TypeError('Columns input poorly formatted.')
 
     @property
     def column_types(self):
@@ -87,7 +99,39 @@ class EBlink(object):
         if type(types) == dict:
             self._column_types = types
         else:
-            raise NameError('Types must be dict.')
+            raise TypeError('Column types input poorly formatted.')
+
+    @property
+    def match_columns(self):
+        return self._matchcolumns
+
+    @match_columns.setter(self):
+    def match_columns_setter(self, match_columns):
+        if type(match_columns) == dict:
+            if self._columns != None:
+                for x in match_columns.keys():
+                    if x not in self._columns:
+                        raise NameError('matchcolumns keys do not match columns')
+                    self._matchcolumns = match_columns
+            else:
+                self._matchcolumns = match_columns
+        else:
+            raise TypeError('Match columns input poorly formatted.')
+
+    @property
+    def indices(self):
+        return self._indices
+
+    @indices.setter(self):
+    def indices_setter(self, indices):
+        if type(indices) == list:
+            self._indices = indices
+        else:
+            raise TypeError('Indices input poorly formatted.')
+
+    ########################################################
+    ##################   Class Methods   ###################
+    ########################################################
 
     def set_files(self, filename=None, delete=False):
         '''
@@ -240,12 +284,12 @@ class EBlink(object):
         if self._interactive == True:
             print '\nPLEASE SET THE ALPHA AND BETA VALUES FOR THE PRIOR DISTRIBUTION.'
             print 'If you are unsure how to set these values, please see the documentation for ebLink.\n'
-            self.a = None
-            while self.a == None:
-                self.a = raw_input('Alpha: ')
-            self.b = None
-            while self.b == None:
-                self.b = raw_input('Beta: ')
+            self.alpha = None
+            while self.alpha == None:
+                self.alpha = raw_input('Alpha: ')
+            self.beta = None
+            while self.beta == None:
+                self.beta = raw_input('Beta: ')
             print '\nHOW MANY INTERATIONS SHOULD BE RUN? RECOMMENDED > 100,000.'
             self.iterations = 0
             while self.iterations == 0:
@@ -254,8 +298,8 @@ class EBlink(object):
                 self.define()
 
         else:
-            self.a = a
-            self.b = b
+            self.alpha = a
+            self.beta = b
             self.iterations = iterations
 
     def build(self, headers=False):
@@ -268,7 +312,7 @@ class EBlink(object):
             return
 
         self._build_directory()
-        columns = self._columns[0]
+        columns = self._columns[0] + ['ETL_ID'] # Adding a temporary ID
 
         with open(self._tmp, 'w') as dest:
             wtr = csv.writer(dest)
@@ -293,16 +337,18 @@ class EBlink(object):
                     self._filenum.append(file_count)
                     if file_count == 1:
                         row = []
-                        for col in columns:
+                        for col in self._columns[0]:
                             index = headers.index(col)
                             row.append(line[index])
                     elif file_count >= 2:
                     # Else use match_columns to make sure columns are matched to
                     # first file's columns in the new file.
                         row = []
-                        for col in columns:
+                        for col in self._columns[0]:
                             index = headers.index(self._matchcolumns[col][file_count-2])
                             row.append(line[index])
+                    # Add additional ID, unique for the link
+                    row.append(self._numrecords)
                     wtr.writerow(row)
                 if fi:
                     fi.close()
@@ -351,7 +397,7 @@ class EBlink(object):
         '''
         import R_interface as ri
         result, estPopSize = ri.run_eblink(self._tmp, self._tmp_dir,
-         self.column_types, self.a, self.b, self.iterations, self._filenum,
+         self.column_types, self.alpha, self.beta, self.iterations, self._filenum,
          self._numrecords)
         self.pop_est = np.average(estPopSize)
         del estPopSize
@@ -373,9 +419,8 @@ class EBlink(object):
             print 'No pairs identified.'
             return
 
-        lookup_pairs = {} # Create a dict to look-up pairs of entries
         for pair in self.pairs:
-            lookup_pairs = self._add_to_dict(lookup_pairs, pair[0], pair[1])
+            self._lookup_pairs = self._add_to_dict(self._lookup_pairs, pair[0], pair[1])
         rv = {} # This is the output data set
         new_id = 0 # This is a new, uninteresting id for building rv
         filenum_index = 0 # This is for indexing into the self.filenum object
@@ -403,8 +448,8 @@ class EBlink(object):
 
                 # Check if this entry has matches that are already placed
                 placed_matches = []
-                if filenum_index in lookup_pairs:
-                    placed_matches = [x for x in lookup_pairs[filenum_index] if x in placed]
+                if filenum_index in self._lookup_pairs:
+                    placed_matches = [x for x in self._lookup_pairs[filenum_index] if x in placed]
 
                 if len(placed_matches) > 0:
                     # If so, then add this UID to that entry
@@ -434,6 +479,32 @@ class EBlink(object):
         # Place crosswalk into attributes as a Pandas Dataframe
         self.crosswalk = pd.DataFrame.from_dict(rv, orient='index')
 
+    def build_linked_data(self, interactive=False):
+        '''
+        Builds a set of linked data.
+        '''
+        rv = []
+        data = pd.read_csv(self._tmp)
+        keeps = [x[0] for x in self.pairs] # Entries to keep
+        deletes = [y for sub in [x[1:] for x in self.pairs] for y in sub] # Flattens list of others
+
+        rv.append(self._columns[0] + ['ETL_ID'])
+        for i in range(len(self._filenum)):
+            if interactive and (i+1 in keeps or i+1 in deletes):
+                print 'Linked entries:'
+                print '  Entry {}: {}'.format(i+1, list(data.iloc[i]))
+                for j in self._lookup_pairs[i]:
+                    print '  Entry {}: {}'.format(j, list(data.iloc[j]))
+                keep = None
+                while keep not in self._lookup_pairs[i]:
+                    keep = int(raw_input('Please select which ETL_ID to keep: '))
+                keep = int(keep.strip())- 1
+                rv.append(list(data.iloc[keep]))
+            elif i+1 not in deletes:
+                rv.append(list(data.iloc[i]))
+
+        self.linked_set = pd.DataFrame(rv)
+
     def _add_to_dict(self, dict, value1, value2):
         '''
         Adds both values and redundantly refers them to one another in dict.
@@ -461,7 +532,7 @@ class EBlink(object):
 
     def write(self, obj, filename):
         '''
-        Writes results of ebLink object to file.
+        Writes ebLink object to file.
         '''
         if filename == None:
             filename = 'links_' + datetime.today().strftime('%y%m%d-%H%M%S') + '.ebout'
