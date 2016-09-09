@@ -52,7 +52,7 @@ def run_eblink(tmp, tmp_dir, column_types, a, b, iterations, filenum, numrecords
     ro.r("d <- function(string1,string2){adist(string1,string2)}")
     d = ro.r['d']
     # Loads in Gibbs sampler and plyr packages
-    eb_pack = ro.r("source('{}', chdir = TRUE)".format(find('ebGibbsSampler.R', '.')))
+    eb_pack = ro.r("source('{}', chdir = TRUE)".format(find('ebGibbsSampler.R', '../../')))
     plyr = importr("plyr")
     # Move to tmp directory to save results file
     os.chdir(tmp_dir)
