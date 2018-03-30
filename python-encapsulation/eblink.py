@@ -58,10 +58,10 @@ class EBlink(object):
             self.set_files()
         self.set_columns()
         self.get_col_types()
-        self.betauild()
+        self.build()
         self.define()
         self.model()
-        self.betauild_crosswalk()
+        self.build_crosswalk()
         self.pickle()
 
     ########################################################
